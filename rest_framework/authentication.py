@@ -238,12 +238,15 @@ class DigestAuthentication(BaseAuthentication):
         if not self.auth_header['realm'] == self.realm:
             raise exceptions.ParseError('Provided realm not valid')
 
-        if 'qop' in self.auth_header:
-            if self.auth_header['qop'] not in ('auth', 'auth-int'):
-                self.auth_header['qop'] = None
-            else:
-                # check for qop companions
-                raise exceptions.ParseError('qop sent without cnonce and cn')
+        qop = self.auth_header.get('qop')
+        if qop not in ('auth', 'auth-int', None):
+            raise exceptions.ParseError('qop value not valid')
+
+        if qop in ('auth', 'auth-int'):
+            for c in ('nonce', 'nc', 'cnonce'):
+                if c not in self.auth_header:
+                    raise ValueError('%s is required' % c)
+
 
     def check_digest_auth(self, request):
         """
@@ -273,19 +276,38 @@ class DigestAuthentication(BaseAuthentication):
         Else if the qop directive is unspecified, then compute the response as follows:
            RESPONSE = MD5(HA1:nonce:HA2)
         """
-        HA1_value = self.HA1(password)
-        HA2_value = self.HA2(request)
+        HA1_value = self.create_HA1(password)
+        HA2_value = self.create_HA2(request)
 
-    def HA1(self, password):
+        if self.auth_header.get('qop') is None:
+            response_data = ":".join([HA1_value, self.auth_header['nonce'], HA2_value])
+            response = self.hash_func(response_data)
+        else:
+            # self.auth_header['qop'] in ('auth', 'auth-int')
+            response_data = ":".join([HA1_value,
+                                      self.auth_header['nonce'],
+                                      self.auth_header['nc'],
+                                      self.auth_header['cnonce'],
+                                      self.auth_header['qop'],
+                                      HA2_value])
+            response = self.hash_func(response_data)
+
+
+        return response
+
+    def create_HA1(self, password):
         """
         Create HA1 hash by realm, username, password
 
         HA1 = md5(A1) = MD5(username:realm:password)
         """
-        A1 = '%s:%s:%s' % (self.auth_header['username'], self.realm, password)
+        A1 = '%s:%s:%s' % (
+            self.auth_header['username'],
+            self.realm,
+            password)
         return self.hash_func(A1)
 
-    def HA2(self, request):
+    def create_HA2(self, request):
         """
         Create HA2 md5 hash
 
@@ -307,7 +329,6 @@ class DigestAuthentication(BaseAuthentication):
                     request_path,
                     body_hash)
             return self.hash_func(A2)
-
 
     def hash_func(self, data):
         alg_hash_func = self.hash_algorithms[self.algorithm]
