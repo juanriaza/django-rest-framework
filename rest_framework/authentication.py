@@ -129,12 +129,6 @@ class DigestAuthentication(BaseAuthentication):
     """
     HTTP Digest authentication against username/password.
     Compliant with RFC 2617 (http://tools.ietf.org/html/rfc2617).
-
-    Based on
-    # http://flask.pocoo.org/snippets/31/
-    # https://github.com/shanewholloway/werkzeug/blob/master/werkzeug/contrib/authdigest.py
-    # https://github.com/kennethreitz/httpbin/blob/master/httpbin/core.py#L292
-    # https://github.com/Almad/django-http-digest
     """
     model = User
     username_field = 'username'

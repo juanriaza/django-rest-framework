@@ -28,7 +28,7 @@ urlpatterns = patterns('',
     (r'^auth-token/$', 'rest_framework.authtoken.views.obtain_auth_token'),
 )
 
-'''
+
 class BasicAuthTests(TestCase):
     """Basic authentication"""
     urls = 'rest_framework.tests.authentication'
@@ -181,13 +181,11 @@ class TokenAuthTests(TestCase):
                                {'username': self.username, 'password': self.password})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.content)['token'], self.key)
-'''
+
 
 class DigestAuthTests(TestCase):
     """
-    Digset authentication
-
-    Based on https://github.com/kennethreitz/requests/blob/master/requests/auth.py#L140
+    Digest authentication
     """
     urls = 'rest_framework.tests.authentication'
 
