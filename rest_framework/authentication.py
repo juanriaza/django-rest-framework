@@ -158,7 +158,9 @@ class DigestAuthentication(BaseAuthentication):
             # auth_header = self.parse_authorization_header_2(request.META['HTTP_AUTHORIZATION'])
             self.check_authorization_header()
 
-            if self.check_digest_auth(request):
+            model_instance = self.get_model_instance()
+            password = getattr(model_instance, self.password_field)
+            if self.check_digest_auth(request, password):
                 print 'YAY'
 
     def authenticate_header(self, request):
@@ -247,43 +249,39 @@ class DigestAuthentication(BaseAuthentication):
                 if c not in self.auth_header:
                     raise ValueError('%s is required' % c)
 
-
-    def check_digest_auth(self, request):
-        """
-        Check user authentication using HTTP Digest auth
-        """
-        password = self.get_password()
-        response_hash = self.generate_response(request, password)
-        return response_hash == self.auth_header['response']
-
-    def get_password(self):
+    def get_model_instance(self):
         username = self.auth_header['username']
         params = {self.username_field: username}
         try:
             inst = self.model.objects.get(**params)
         except self.model.DoesNotExist:
             raise exceptions.PermissionDenied
+        return inst
 
-        password = getattr(inst, self.password_field)
-        return password
+    def check_digest_auth(self, request, password):
+        """
+        Check user authentication using HTTP Digest auth
+        """
+        response_hash = self.generate_response(request, password)
+        return response_hash == self.auth_header['response']
 
     def generate_response(self, request, password):
         """
         Compile digest auth response
 
-        If the qop directive's value is "auth" or "auth-int" , then compute the response as follows:
-           RESPONSE = MD5(HA1:nonce:nonceCount:clienNonce:qop:HA2)
-        Else if the qop directive is unspecified, then compute the response as follows:
+        If the qop directive's value is "auth" or "auth-int":
+           RESPONSE = HASH(HA1:nonce:nc:cnonce:qop:HA2)
+        If the "qop" directive is not present (this construction is for compatibility with RFC 2069):
            RESPONSE = MD5(HA1:nonce:HA2)
         """
         HA1_value = self.create_HA1(password)
         HA2_value = self.create_HA2(request)
 
         if self.auth_header.get('qop') is None:
-            response_data = ":".join([HA1_value, self.auth_header['nonce'], HA2_value])
+            response_data = ':'.join([HA1_value, self.auth_header['nonce'], HA2_value])
             response = self.hash_func(response_data)
         else:
-            # self.auth_header['qop'] in ('auth', 'auth-int')
+            # qop is 'auth' or 'auth-int'
             response_data = ":".join([HA1_value,
                                       self.auth_header['nonce'],
                                       self.auth_header['nc'],
@@ -291,8 +289,6 @@ class DigestAuthentication(BaseAuthentication):
                                       self.auth_header['qop'],
                                       HA2_value])
             response = self.hash_func(response_data)
-
-
         return response
 
     def create_HA1(self, password):
@@ -301,10 +297,10 @@ class DigestAuthentication(BaseAuthentication):
 
         HA1 = md5(A1) = MD5(username:realm:password)
         """
-        A1 = '%s:%s:%s' % (
+        A1 = ':'.join((
             self.auth_header['username'],
             self.realm,
-            password)
+            password))
         return self.hash_func(A1)
 
     def create_HA2(self, request):
@@ -320,14 +316,14 @@ class DigestAuthentication(BaseAuthentication):
         request_path = request.get_full_path()
 
         if self.auth_header.get('qop') in ('auth', None):
-            A2 = '%s:%s' % (request_method, request_path)
+            A2 = ':'.join((request_method, request_path))
             return self.hash_func(A2)
         elif self.auth_header.get('qop') == 'auth-int':
             request_body = request.body
             body_hash = self.hash_func(request_body)
-            A2 = '%s:%s:%s' % (request_method,
+            A2 = ':'.join((request_method,
                     request_path,
-                    body_hash)
+                    body_hash))
             return self.hash_func(A2)
 
     def hash_func(self, data):
