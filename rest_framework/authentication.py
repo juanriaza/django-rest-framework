@@ -131,14 +131,11 @@ class DigestAuthentication(BaseAuthentication):
     HTTP Digest authentication against username/password.
     Compliant with RFC 2617 (http://tools.ietf.org/html/rfc2617).
 
-    You can use another model different than User:
-        - Change: model, username_field, secret_field
-
     Based on
     # http://flask.pocoo.org/snippets/31/
     # https://github.com/shanewholloway/werkzeug/blob/master/werkzeug/contrib/authdigest.py
-    # https://github.com/Almad/django-http-digest
     # https://github.com/kennethreitz/httpbin/blob/master/httpbin/core.py#L292
+    # https://github.com/Almad/django-http-digest
     """
     model = User
     username_field = 'username'
@@ -146,10 +143,10 @@ class DigestAuthentication(BaseAuthentication):
     realm = 'django-rest-framework'
     hash_algorithms = {
         'MD5': hashlib.md5,
-        'SHA': hashlib.sha1
-    }
-    algorithm = 'MD5' # or 'SHA'
-    qop = 'auth' # 'auth-int'
+        'SHA': hashlib.sha1}
+    algorithm = 'MD5' # 'MD5' or 'SHA'
+    # quality of protection
+    qop = 'auth' # 'auth' or 'auth-int'
 
     def authenticate(self, request):
         """
@@ -163,31 +160,34 @@ class DigestAuthentication(BaseAuthentication):
             self.check_authorization_header()
 
             if self.auth_header['realm'] == self.realm\
-            and self.verify(self.auth_header, request.method, request.get_full_path()):
+            and self.check_digest_auth(request):
                 return 'YAY'
 
     def authenticate_header(self, request):
         """
         Builds the WWW-Authenticate response header
 
+        status_code = 401
+
         Reference:
             http://pretty-rfc.herokuapp.com/RFC2617#specification.of.digest.headers
         """
-        # TODO: check nonce implementation
+        # TODO: choose one of the implementations
         nonce = self.digest_hash_alg(self.realm, os.urandom(8))
         # nonce = self.digest_hash_alg(request.remote_addr, time.time(), os.urandom(10)))
         opaque = getattr(self, 'opaque', os.urandom(10))
-        # stale
+
+        # TODO: check stale flag
         # A flag, indicating that the previous request from
         # the client was rejected because the nonce value was stale.
 
         header_format = 'Digest realm="%(realm)s", qop="%(qop)s", nonce="%(nonce)s", opaque="%(opaque)s"'
         header_values = {
             'realm' : self.realm,
-            'nonce' : nonce,
             'qop' : self.qop,
-            'opaque': opaque,
-            'algorithm': self.algorithm}
+            'algorithm': self.algorithm,
+            'nonce' : nonce,
+            'opaque': opaque}
         header = header_format % header_values
         return header
 
@@ -243,39 +243,25 @@ class DigestAuthentication(BaseAuthentication):
                 # check for qop companions
                 raise exceptions.ParseError('qop sent without cnonce and cn')
 
-    def verify(self, headers, req_method, req_path):
+    def check_digest_auth(self, request):
         """
-        Compare computed secret to secret from authentication backend.
+        Check user authentication using HTTP Digest auth
         """
-        client_secret = headers['response']
-        server_secret = self.get_server_secret(headers, req_method, req_path)
-        return client_secret == server_secret
+        request_method = request.method
+        request_path = request.get_full_path()
+        response_hash = self.generate_response(request_method, request_path)
+        return response_hash == self.auth_header['response']
 
-    def get_a1(self, headers):
-        username = headers['username']
-        params = {self.username_field: username}
-        inst = self.model.objects.get(**params)
-        a1 = getattr(inst, self.password_field)
-        return a1
-
-    def get_server_secret(self, headers, req_method, req_path):
+    def generate_response(self, request_method, request_path):
         """
-        Compute server secret from provided, partially computed values.
+        Compile digest auth response
+
+        If the qop directive's value is "auth" or "auth-int" , then compute the response as follows:
+           RESPONSE = MD5(HA1:nonce:nonceCount:clienNonce:qop:HA2)
+        Else if the qop directive is unspecified, then compute the response as follows:
+           RESPONSE = MD5(HA1:nonce:HA2)
         """
-        assert 'auth' == headers['qop']
-
-        # A2, according to section 3.2.2.3
-        a2 =  self.digest_hash_alg(req_method, req_path)
-
-        request_digest = (
-            self.get_a1(headers),
-            headers['nonce'],
-            headers['nc'],
-            headers['cnonce'],
-            headers['qop'],
-            a2)
-        server_secret = self.digest_hash_alg(request_digest)
-        return server_secret
+        pass
 
     def digest_hash_alg(self, *args):
         data = ':'.join(map(str, args))
