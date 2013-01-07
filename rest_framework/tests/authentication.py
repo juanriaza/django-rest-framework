@@ -196,7 +196,6 @@ class DigestAuthTests(TestCase):
         self.password = 'password'
         self.user = User.objects.create_user(self.username, self.email, self.password)
 
-    def test_custom(self):
-        auth = 'Digest username="user", realm="me@kennethreitz.com", nonce="ea3a64f36d094ab560c29e3e8d7ed320", uri="/digest-auth/auth/user/pass", response="1cd62b7a35d5fdad7291e6789107cb1c", opaque="5fe36b905943e32dd5566c9797946e1c", qop=auth, nc=00000001, cnonce="997b2506f8a838b2"'
-        response = self.csrf_client.post('/', {'example': 'example'}, HTTP_AUTHORIZATION=auth)
-        self.assertEqual(response.status_code, 403)
+    def test_challenge(self):
+        response = self.csrf_client.post('/', {'example': 'example'})
+        self.assertEqual(response.status_code, 401)

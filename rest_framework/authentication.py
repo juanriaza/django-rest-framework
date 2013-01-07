@@ -137,6 +137,7 @@ class DigestAuthentication(BaseAuthentication):
     hash_algorithms = {
         'MD5': hashlib.md5,
         'SHA': hashlib.sha1}
+    # TODO: check 'MD5-sess'
     algorithm = 'MD5' # 'MD5'/'MD5-sess'/'SHA'
     # quality of protection
     qop = 'auth' # 'auth'/'auth-int'/None
@@ -160,7 +161,7 @@ class DigestAuthentication(BaseAuthentication):
             model_instance = self.get_model_instance()
             password = getattr(model_instance, self.password_field)
             if self.check_digest_auth(request, password):
-                print 'YAY'
+                return (None, model_instance, None)
 
     def authenticate_header(self, request):
         """
