@@ -249,10 +249,22 @@ class DigestAuthentication(BaseAuthentication):
         """
         Check user authentication using HTTP Digest auth
         """
-        response_hash = self.generate_response(request)
+        password = self.get_password()
+        response_hash = self.generate_response(request, password)
         return response_hash == self.auth_header['response']
 
-    def generate_response(self, request):
+    def get_password(self):
+        username = self.auth_header['username']
+        params = {self.username_field: username}
+        try:
+            inst = self.model.objects.get(**params)
+        except self.model.DoesNotExist:
+            raise exceptions.PermissionDenied
+
+        password = getattr(inst, self.password_field)
+        return password
+
+    def generate_response(self, request, password):
         """
         Compile digest auth response
 
@@ -261,7 +273,6 @@ class DigestAuthentication(BaseAuthentication):
         Else if the qop directive is unspecified, then compute the response as follows:
            RESPONSE = MD5(HA1:nonce:HA2)
         """
-        password = 'JAJA'
         HA1_value = self.HA1(password)
         HA2_value = self.HA2(request)
 
