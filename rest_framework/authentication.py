@@ -191,8 +191,8 @@ class DigestAuthentication(BaseAuthentication):
             'realm' : self.realm,
             'qop' : self.qop,
             'algorithm': self.algorithm,
-            'nonce' : nonce,
-            'opaque': self.opaque}
+            'opaque': self.opaque,
+            'nonce' : nonce}
         header = header_format % header_values
         return header
 
@@ -306,8 +306,7 @@ class DigestAuthentication(BaseAuthentication):
             A2 = ':'.join((request.method, self.auth_header['uri']))
             return self.hash_func(A2)
         elif self.auth_header.get('qop') == 'auth-int':
-            request_body = request.body
-            body_hash = self.hash_func(request_body)
+            body_hash = self.hash_func(request.body)
             A2 = ':'.join((request.method,
                            self.auth_header['uri'],
                            body_hash))
