@@ -137,8 +137,7 @@ class DigestAuthentication(BaseAuthentication):
     hash_algorithms = {
         'MD5': hashlib.md5,
         'SHA': hashlib.sha1}
-    # TODO: check 'MD5-sess'
-    algorithm = 'MD5' # 'MD5'/'MD5-sess'/'SHA'
+    algorithm = 'MD5' # 'MD5'/'SHA'/'MD5-sess'
     # quality of protection
     qop = 'auth' # 'auth'/'auth-int'/None
     opaque = None
@@ -262,7 +261,10 @@ class DigestAuthentication(BaseAuthentication):
         HA2_value = self.create_HA2(request)
 
         if self.auth_header.get('qop') is None:
-            response_data = ':'.join([HA1_value, self.auth_header['nonce'], HA2_value])
+            response_data = ':'.join((
+                HA1_value,
+                self.auth_header['nonce'],
+                HA2_value))
             response = self.hash_func(response_data)
         else:
             # qop is 'auth' or 'auth-int'
@@ -277,24 +279,35 @@ class DigestAuthentication(BaseAuthentication):
 
     def create_HA1(self, password):
         """
-        Create HA1 hash by realm, username, password
+        Create HA1 hash
 
-        HA1 = md5(A1) = MD5(username:realm:password)
+        HA1 = HASH(A1) = HASH(username:realm:password)
         """
-        A1 = ':'.join((
-            self.auth_header['username'],
-            self.auth_header['realm'],
-            password))
+        if self.algorithm == 'MD5-sess':
+            data = ':'.join((
+                self.auth_header['username'],
+                self.auth_header['realm'],
+                password))
+            data_hash = self.hash_func(data)
+            A1 = ':'.join((
+                data_hash,
+                self.auth_header['nonce'],
+                self.auth_header['cnonce']))
+        else:
+            A1 = ':'.join((
+                self.auth_header['username'],
+                self.auth_header['realm'],
+                password))
         return self.hash_func(A1)
 
     def create_HA2(self, request):
         """
-        Create HA2 md5 hash
+        Create HA2 hash
 
-        If the "qop" directive's value is "auth" or is unspecified:
-            HA2 = md5(A2) = MD5(request-method:digest-URI)
+        If the "qop" directive's value is "auth" or is unspecified, then HA2 is:
+            HA2 = HASH(A2) = HASH(request-method:digest-URI)
         If the qop directive's value is "auth-int", then HA2 is
-            HA2 = md5(A2) = MD5(request-method:digest-URI:MD5(entityBody))
+            HA2 = HASH(A2) = HASH(request-method:digest-URI:MD5(entityBody))
         """
 
         if self.auth_header.get('qop') in ('auth', None):
