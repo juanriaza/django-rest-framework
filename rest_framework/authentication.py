@@ -138,16 +138,18 @@ class DigestAuthentication(BaseAuthentication):
     # http://flask.pocoo.org/snippets/31/
     # https://github.com/shanewholloway/werkzeug/blob/master/werkzeug/contrib/authdigest.py
     # https://github.com/Almad/django-http-digest
+    # https://github.com/kennethreitz/httpbin/blob/master/httpbin/core.py#L292
     """
-    realm = 'django-rest-framework'
     model = User
     username_field = 'username'
-    secret_field= 'password'
+    password_field= 'password'
+    realm = 'django-rest-framework'
     hash_algorithms = {
-        'md5': hashlib.md5,
-        'sha1': hashlib.sha1
+        'MD5': hashlib.md5,
+        'SHA': hashlib.sha1
     }
-    algorithm = 'md5'
+    algorithm = 'MD5' # or 'SHA'
+    qop = 'auth' # 'auth-int'
 
     def authenticate(self, request):
         """
@@ -155,22 +157,91 @@ class DigestAuthentication(BaseAuthentication):
         using HTTP Digest authentication.  Otherwise returns `None`.
         """
         if 'HTTP_AUTHORIZATION' in request.META:
-            headers = self.parse_authorization_header(request.META['HTTP_AUTHORIZATION'])
+            # TODO: choose one of the implementations
+            self.parse_authorization_header_1(request.META['HTTP_AUTHORIZATION'])
+            # auth_header = self.parse_authorization_header_2(request.META['HTTP_AUTHORIZATION'])
+            self.check_authorization_header()
 
-            if headers['realm'] == self.realm\
-            and self.verify(headers, request.method, request.get_full_path()):
+            if self.auth_header['realm'] == self.realm\
+            and self.verify(self.auth_header, request.method, request.get_full_path()):
                 return 'YAY'
-        print 'NOT AUTH'
 
     def authenticate_header(self, request):
+        """
+        Builds the WWW-Authenticate response header
+
+        Reference:
+            http://pretty-rfc.herokuapp.com/RFC2617#specification.of.digest.headers
+        """
+        # TODO: check nonce implementation
         nonce = self.digest_hash_alg(self.realm, os.urandom(8))
+        # nonce = self.digest_hash_alg(request.remote_addr, time.time(), os.urandom(10)))
+        opaque = getattr(self, 'opaque', os.urandom(10))
+        # stale
+        # A flag, indicating that the previous request from
+        # the client was rejected because the nonce value was stale.
+
         header_format = 'Digest realm="%(realm)s", qop="%(qop)s", nonce="%(nonce)s", opaque="%(opaque)s"'
-        header = header_format % {
+        header_values = {
             'realm' : self.realm,
-            'qop' : 'auth',
             'nonce' : nonce,
-            'opaque' : 'CHECK_THIS'}
+            'qop' : self.qop,
+            'opaque': opaque,
+            'algorithm': self.algorithm}
+        header = header_format % header_values
         return header
+
+    def parse_authorization_header_1(self, auth_header):
+        if not auth_header.startswith('Digest '):
+            raise exceptions.ParseError('Header do not start with Digest')
+        auth_header = auth_header.replace('Digest ', '')
+        from requests.utils import parse_dict_header
+        # we can add parse_dict_header to the utils module
+        self.auth_header = parse_dict_header(auth_header)
+
+    def parse_authorization_header_2(self, auth_header):
+        if not auth_header.startswith('Digest '):
+            raise exceptions.ParseError('Header do not start with Digest')
+        auth_header = auth_header.replace('Digest ', '')
+        import urllib2
+        items = urllib2.parse_http_list(auth_header)
+        params = urllib2.parse_keqv_list(items)
+        self.auth_header = params
+
+    def check_authorization_header(self):
+        # {'username': 'user', 'nonce': 'ea3a64f36d094ab560c29e3e8d7ed320', 'nc': '00000001', 'realm': 'me@kennethreitz.com',
+        # 'opaque': '5fe36b905943e32dd5566c9797946e1c', 'cnonce': '997b2506f8a838b2', 'qop': 'auth',
+        # 'uri': '/digest-auth/auth/user/pass','response': '1cd62b7a35d5fdad7291e6789107cb1c'}
+
+        # The values of the opaque and algorithm fields must be those supplied in the WWW-Authenticate response header
+        if 'opaque' in self.auth_header:
+            opaque = getattr(self, 'opaque')
+            if opaque:
+                if not self.auth_header['opaque'] == opaque:
+                    raise exceptions.ParseError('Opaque provided not valid')
+        if 'algorithm' in self.auth_header:
+            if not self.auth_header['algorithm'] == self.algorithm:
+                raise exceptions.ParseError('Algorithm provided not valid')
+
+        required = (
+            # The user's name in the specified realm.
+            'username',
+            'realm',
+            'nonce',
+            'uri',
+            # A string of 32 hex digits computed as defined below, which proves that the user knows a password
+            'response')
+
+        for field in required:
+            if field not in self.auth_header:
+                raise exceptions.ParseError('Required field %s not found' % field)
+
+        if 'qop' in self.auth_header:
+            if self.auth_header['qop'] not in ('auth', 'auth-int'):
+                self.auth_header['qop'] = None
+            else:
+                # check for qop companions
+                raise exceptions.ParseError('qop sent without cnonce and cn')
 
     def verify(self, headers, req_method, req_path):
         """
@@ -184,7 +255,7 @@ class DigestAuthentication(BaseAuthentication):
         username = headers['username']
         params = {self.username_field: username}
         inst = self.model.objects.get(**params)
-        a1 = getattr(inst, self.secret_field)
+        a1 = getattr(inst, self.password_field)
         return a1
 
     def get_server_secret(self, headers, req_method, req_path):
@@ -205,28 +276,6 @@ class DigestAuthentication(BaseAuthentication):
             a2)
         server_secret = self.digest_hash_alg(request_digest)
         return server_secret
-
-    def parse_authorization_header(self, header):
-        # TODO: check https://github.com/kennethreitz/requests/blob/master/requests/utils.py#L167
-        if not header.startswith('Digest '):
-            raise exceptions.ParseError('Header do not start with Digest')
-        header = header[len('Digest '):]
-
-        # Convert the auth params to a dict
-        items = urllib2.parse_http_list(header)
-        params = urllib2.parse_keqv_list(items)
-
-        required = ('username', 'realm', 'nonce', 'uri', 'response')
-
-        for field in required:
-            if field not in params:
-                raise exceptions.ParseError('Required field %s not found' % field)
-
-        # check for qop companions (sect. 3.2.2)
-        if 'qop' in params and 'cnonce' not in params and 'cn' in params:
-            raise exceptions.ParseError('qop sent without cnonce and cn')
-
-        return params
 
     def digest_hash_alg(self, *args):
         data = ':'.join(map(str, args))
