@@ -143,20 +143,25 @@ class DigestAuthentication(BaseAuthentication):
     hash_algorithms = {
         'MD5': hashlib.md5,
         'SHA': hashlib.sha1}
-    algorithm = 'MD5' # 'MD5' or 'SHA'
+    algorithm = 'MD5' # 'MD5'/'MD5-sess'/'SHA'
     # quality of protection
-    qop = 'auth' # 'auth' or 'auth-int'
+    qop = 'auth' # 'auth'/'auth-int'/None
+    opaque = None
 
     def authenticate(self, request):
         """
         Returns a `User` if a correct username and password have been supplied
         using HTTP Digest authentication.  Otherwise returns `None`.
         """
+        opaque = getattr(self, 'opaque')
+        if not opaque:
+            self.opaque = os.urandom(10)
+
         if 'HTTP_AUTHORIZATION' in request.META:
             # TODO: choose one of the implementations
             self.parse_authorization_header_1(request.META['HTTP_AUTHORIZATION'])
             # auth_header = self.parse_authorization_header_2(request.META['HTTP_AUTHORIZATION'])
-            self.check_authorization_header()
+            self.check_authorization_request_header()
 
             model_instance = self.get_model_instance()
             password = getattr(model_instance, self.password_field)
@@ -176,7 +181,6 @@ class DigestAuthentication(BaseAuthentication):
         nonce_data = '%s:%s' % (self.realm, os.urandom(8))
         # nonce_data = '%s:%s:%s' % (request.remote_addr, time.time(), os.urandom(10)))
         nonce = self.hash_func(nonce_data)
-        opaque = getattr(self, 'opaque', os.urandom(10))
 
         # TODO: check stale flag
         # A flag, indicating that the previous request from
@@ -188,7 +192,7 @@ class DigestAuthentication(BaseAuthentication):
             'qop' : self.qop,
             'algorithm': self.algorithm,
             'nonce' : nonce,
-            'opaque': opaque}
+            'opaque': self.opaque}
         header = header_format % header_values
         return header
 
@@ -209,45 +213,34 @@ class DigestAuthentication(BaseAuthentication):
         params = urllib2.parse_keqv_list(items)
         self.auth_header = params
 
-    def check_authorization_header(self):
-        # {'username': 'user', 'nonce': 'ea3a64f36d094ab560c29e3e8d7ed320', 'nc': '00000001', 'realm': 'me@kennethreitz.com',
-        # 'opaque': '5fe36b905943e32dd5566c9797946e1c', 'cnonce': '997b2506f8a838b2', 'qop': 'auth',
-        # 'uri': '/digest-auth/auth/user/pass','response': '1cd62b7a35d5fdad7291e6789107cb1c'}
+    def check_authorization_request_header(self):
+        """
+        The values of the opaque and algorithm fields must be those supplied in the WWW-Authenticate response header
+        """
+        required_fields = ('username', 'realm', 'nonce', 'uri',
+                           'response','algorithm', 'opaque')
 
-        # The values of the opaque and algorithm fields must be those supplied in the WWW-Authenticate response header
-        if 'opaque' in self.auth_header:
-            opaque = getattr(self, 'opaque')
-            if opaque:
-                if not self.auth_header['opaque'] == opaque:
-                    raise exceptions.ParseError('Opaque provided not valid')
-        if 'algorithm' in self.auth_header:
-            if not self.auth_header['algorithm'] == self.algorithm:
-                raise exceptions.ParseError('Algorithm provided not valid')
-
-        required = (
-            # The user's name in the specified realm.
-            'username',
-            'realm',
-            'nonce',
-            'uri',
-            # A string of 32 hex digits computed as defined below, which proves that the user knows a password
-            'response')
-
-        for field in required:
+        for field in required_fields:
             if field not in self.auth_header:
                 raise exceptions.ParseError('Required field %s not found' % field)
 
-        if not self.auth_header['realm'] == self.realm:
-            raise exceptions.ParseError('Provided realm not valid')
+        for field in ('opaque', 'algorithm', 'realm', 'qop'):
+            if not self.auth_header[field] == getattr(self, field):
+                raise exceptions.ParseError('%s provided not valid' % field)
 
         qop = self.auth_header.get('qop')
         if qop not in ('auth', 'auth-int', None):
             raise exceptions.ParseError('qop value not valid')
 
         if qop in ('auth', 'auth-int'):
-            for c in ('nonce', 'nc', 'cnonce'):
+            for c in ('nc', 'cnonce'):
                 if c not in self.auth_header:
-                    raise ValueError('%s is required' % c)
+                    raise exceptions.ParseError('%s is required' % c)
+
+        if not qop:
+            for c in ('nc', 'cnonce'):
+                if c in self.auth_header:
+                    raise exceptions.ParseError('%s provided without qop' % c)
 
     def get_model_instance(self):
         username = self.auth_header['username']
@@ -299,7 +292,7 @@ class DigestAuthentication(BaseAuthentication):
         """
         A1 = ':'.join((
             self.auth_header['username'],
-            self.realm,
+            self.auth_header['realm'],
             password))
         return self.hash_func(A1)
 
@@ -307,23 +300,21 @@ class DigestAuthentication(BaseAuthentication):
         """
         Create HA2 md5 hash
 
-        If the qop directive's value is "auth" or is unspecified, then HA2:
-            HA2 = md5(A2) = MD5(method:digestURI)
+        If the "qop" directive's value is "auth" or is unspecified:
+            HA2 = md5(A2) = MD5(request-method:digest-URI)
         If the qop directive's value is "auth-int", then HA2 is
-            HA2 = md5(A2) = MD5(method:digestURI:MD5(entityBody))
+            HA2 = md5(A2) = MD5(request-method:digest-URI:MD5(entityBody))
         """
-        request_method = request.method
-        request_path = request.get_full_path()
 
         if self.auth_header.get('qop') in ('auth', None):
-            A2 = ':'.join((request_method, request_path))
+            A2 = ':'.join((request.method, self.auth_header['uri']))
             return self.hash_func(A2)
         elif self.auth_header.get('qop') == 'auth-int':
             request_body = request.body
             body_hash = self.hash_func(request_body)
-            A2 = ':'.join((request_method,
-                    request_path,
-                    body_hash))
+            A2 = ':'.join((request.method,
+                           self.auth_header['uri'],
+                           body_hash))
             return self.hash_func(A2)
 
     def hash_func(self, data):
