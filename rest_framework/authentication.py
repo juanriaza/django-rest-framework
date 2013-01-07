@@ -229,14 +229,10 @@ class DigestAuthentication(BaseAuthentication):
                 raise exceptions.ParseError('%s provided not valid' % field)
 
         qop = self.auth_header.get('qop')
-        if qop not in ('auth', 'auth-int', None):
-            raise exceptions.ParseError('qop value not valid')
-
         if qop in ('auth', 'auth-int'):
             for c in ('nc', 'cnonce'):
                 if c not in self.auth_header:
                     raise exceptions.ParseError('%s is required' % c)
-
         if not qop:
             for c in ('nc', 'cnonce'):
                 if c in self.auth_header:
