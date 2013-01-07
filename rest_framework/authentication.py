@@ -117,8 +117,8 @@ class TokenAuthentication(BaseAuthentication):
         if len(auth) == 2 and auth[0].lower() == "token":
             key = auth[1]
             try:
-                token = self.model.objects.get(key=key)
-            except self.model.DoesNotExist:
+                token = User.objects.get(key=key)
+            except User.DoesNotExist:
                 return None
 
             if token.user.is_active:
@@ -130,12 +130,10 @@ class DigestAuthentication(BaseAuthentication):
     HTTP Digest authentication against username/password.
     Compliant with RFC 2617 (http://tools.ietf.org/html/rfc2617).
     """
-    model = User
-    username_field = 'username'
-    password_field= 'password'
     realm = 'django-rest-framework'
     hash_algorithms = {
         'MD5': hashlib.md5,
+        'MD5-sess': hashlib.md5,
         'SHA': hashlib.sha1}
     algorithm = 'MD5' # 'MD5'/'SHA'/'MD5-sess'
     # quality of protection
@@ -143,12 +141,7 @@ class DigestAuthentication(BaseAuthentication):
     opaque = None
 
     def authenticate(self, request):
-        """
-        Returns a `User` if a correct username and password have been supplied
-        using HTTP Digest authentication.  Otherwise returns `None`.
-        """
-        opaque = getattr(self, 'opaque')
-        if not opaque:
+        if not self.opaque:
             self.opaque = os.urandom(10)
 
         if 'HTTP_AUTHORIZATION' in request.META:
@@ -157,23 +150,20 @@ class DigestAuthentication(BaseAuthentication):
             # auth_header = self.parse_authorization_header_2(request.META['HTTP_AUTHORIZATION'])
             self.check_authorization_request_header()
 
-            model_instance = self.get_model_instance()
-            password = getattr(model_instance, self.password_field)
+            user = self.get_user()
+            password = user.password
             if self.check_digest_auth(request, password):
-                return (None, model_instance, None)
+                return (None, user, None)
 
     def authenticate_header(self, request):
         """
         Builds the WWW-Authenticate response header
-
-        status_code = 401
-
-        Reference:
-            http://pretty-rfc.herokuapp.com/RFC2617#specification.of.digest.headers
         """
         # TODO: choose one of the implementations
+        # http://pretty-rfc.herokuapp.com/RFC2617#the.www-authenticate.response.header
         nonce_data = '%s:%s' % (self.realm, os.urandom(8))
-        # nonce_data = '%s:%s:%s' % (request.remote_addr, time.time(), os.urandom(10)))
+        # nonce_data = '%s:%s:%s' % (request.META.get('REMOTE_ADDR'), time.time(), os.urandom(10)))
+        # nonce_data = "%s:%s" % (time.time(), self.realm)
         nonce = self.hash_func(nonce_data)
 
         # TODO: check stale flag
@@ -233,14 +223,13 @@ class DigestAuthentication(BaseAuthentication):
                 if c in self.auth_header:
                     raise exceptions.ParseError('%s provided without qop' % c)
 
-    def get_model_instance(self):
+    def get_user(self):
         username = self.auth_header['username']
-        params = {self.username_field: username}
         try:
-            inst = self.model.objects.get(**params)
-        except self.model.DoesNotExist:
+            user = User.objects.get(username=username)
+        except User.DoesNotExist:
             raise exceptions.PermissionDenied
-        return inst
+        return user
 
     def check_digest_auth(self, request, password):
         """
@@ -270,12 +259,12 @@ class DigestAuthentication(BaseAuthentication):
             response = self.hash_func(response_data)
         else:
             # qop is 'auth' or 'auth-int'
-            response_data = ":".join([HA1_value,
+            response_data = ":".join((HA1_value,
                                       self.auth_header['nonce'],
                                       self.auth_header['nc'],
                                       self.auth_header['cnonce'],
                                       self.auth_header['qop'],
-                                      HA2_value])
+                                      HA2_value))
             response = self.hash_func(response_data)
         return response
 
@@ -288,7 +277,7 @@ class DigestAuthentication(BaseAuthentication):
         if self.algorithm == 'MD5-sess':
             data = ':'.join((
                 self.auth_header['username'],
-                self.auth_header['realm'],
+                self.realm,
                 password))
             data_hash = self.hash_func(data)
             A1 = ':'.join((
@@ -298,7 +287,7 @@ class DigestAuthentication(BaseAuthentication):
         else:
             A1 = ':'.join((
                 self.auth_header['username'],
-                self.auth_header['realm'],
+                self.realm,
                 password))
         return self.hash_func(A1)
 
