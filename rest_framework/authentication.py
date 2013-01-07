@@ -209,7 +209,8 @@ class DigestAuthentication(BaseAuthentication):
 
     def check_authorization_request_header(self):
         """
-        The values of the opaque and algorithm fields must be those supplied in the WWW-Authenticate response header
+        The values of the opaque and algorithm fields must be those supplied
+        in the WWW-Authenticate response header
         """
         required_fields = ('username', 'realm', 'nonce', 'uri',
                            'response','algorithm', 'opaque')
@@ -254,7 +255,8 @@ class DigestAuthentication(BaseAuthentication):
 
         If the qop directive's value is "auth" or "auth-int":
            RESPONSE = HASH(HA1:nonce:nc:cnonce:qop:HA2)
-        If the "qop" directive is not present (this construction is for compatibility with RFC 2069):
+        If the "qop" directive is not present:
+        (this construction is for compatibility with RFC 2069)
            RESPONSE = MD5(HA1:nonce:HA2)
         """
         HA1_value = self.create_HA1(password)
