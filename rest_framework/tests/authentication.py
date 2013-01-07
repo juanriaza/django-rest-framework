@@ -4,7 +4,7 @@ from django.test import Client, TestCase
 
 from rest_framework import permissions
 from rest_framework.authtoken.models import Token
-from rest_framework.authentication import TokenAuthentication
+from rest_framework.authentication import TokenAuthentication, DigestAuthentication
 from rest_framework.compat import patterns
 from rest_framework.views import APIView
 
@@ -21,7 +21,7 @@ class MockView(APIView):
     def put(self, request):
         return HttpResponse({'a': 1, 'b': 2, 'c': 3})
 
-MockView.authentication_classes += (TokenAuthentication,)
+MockView.authentication_classes += (TokenAuthentication, DigestAuthentication)
 
 urlpatterns = patterns('',
     (r'^$', MockView.as_view()),
@@ -181,3 +181,24 @@ class TokenAuthTests(TestCase):
                                {'username': self.username, 'password': self.password})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.content)['token'], self.key)
+
+
+class DigestAuthTests(TestCase):
+    """
+    Digset authentication
+
+    Based on https://github.com/kennethreitz/requests/blob/master/requests/auth.py#L140
+    """
+    urls = 'rest_framework.tests.authentication'
+
+    def setUp(self):
+        self.csrf_client = Client(enforce_csrf_checks=True)
+        self.username = 'john'
+        self.email = 'lennon@thebeatles.com'
+        self.password = 'password'
+        self.user = User.objects.create_user(self.username, self.email, self.password)
+
+    def test_get_challenge(self):
+        # should get 401 with the challenge
+        response = self.csrf_client.post('/', {'example': 'example'})
+        self.assertEqual(response.status_code, 401)
