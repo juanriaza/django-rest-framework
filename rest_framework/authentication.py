@@ -4,7 +4,6 @@ Provides a set of pluggable authentication policies.
 
 import os
 import base64
-import urllib2
 import hashlib
 from django.contrib.auth import authenticate
 from django.utils.encoding import smart_unicode, DjangoUnicodeDecodeError
@@ -159,9 +158,8 @@ class DigestAuthentication(BaseAuthentication):
             # auth_header = self.parse_authorization_header_2(request.META['HTTP_AUTHORIZATION'])
             self.check_authorization_header()
 
-            if self.auth_header['realm'] == self.realm\
-            and self.check_digest_auth(request):
-                return 'YAY'
+            if self.check_digest_auth(request):
+                print 'YAY'
 
     def authenticate_header(self, request):
         """
@@ -173,8 +171,9 @@ class DigestAuthentication(BaseAuthentication):
             http://pretty-rfc.herokuapp.com/RFC2617#specification.of.digest.headers
         """
         # TODO: choose one of the implementations
-        nonce = self.digest_hash_alg(self.realm, os.urandom(8))
-        # nonce = self.digest_hash_alg(request.remote_addr, time.time(), os.urandom(10)))
+        nonce_data = '%s:%s' % (self.realm, os.urandom(8))
+        # nonce_data = '%s:%s:%s' % (request.remote_addr, time.time(), os.urandom(10)))
+        nonce = self.hash_func(nonce_data)
         opaque = getattr(self, 'opaque', os.urandom(10))
 
         # TODO: check stale flag
@@ -236,6 +235,9 @@ class DigestAuthentication(BaseAuthentication):
             if field not in self.auth_header:
                 raise exceptions.ParseError('Required field %s not found' % field)
 
+        if not self.auth_header['realm'] == self.realm:
+            raise exceptions.ParseError('Provided realm not valid')
+
         if 'qop' in self.auth_header:
             if self.auth_header['qop'] not in ('auth', 'auth-int'):
                 self.auth_header['qop'] = None
@@ -247,12 +249,10 @@ class DigestAuthentication(BaseAuthentication):
         """
         Check user authentication using HTTP Digest auth
         """
-        request_method = request.method
-        request_path = request.get_full_path()
-        response_hash = self.generate_response(request_method, request_path)
+        response_hash = self.generate_response(request)
         return response_hash == self.auth_header['response']
 
-    def generate_response(self, request_method, request_path):
+    def generate_response(self, request):
         """
         Compile digest auth response
 
@@ -261,12 +261,46 @@ class DigestAuthentication(BaseAuthentication):
         Else if the qop directive is unspecified, then compute the response as follows:
            RESPONSE = MD5(HA1:nonce:HA2)
         """
-        pass
+        password = 'JAJA'
+        HA1_value = self.HA1(password)
+        HA2_value = self.HA2(request)
 
-    def digest_hash_alg(self, *args):
-        data = ':'.join(map(str, args))
-        hash_func = self.hash_algorithms[self.algorithm]
-        return hash_func(data).hexdigest()
+    def HA1(self, password):
+        """
+        Create HA1 hash by realm, username, password
+
+        HA1 = md5(A1) = MD5(username:realm:password)
+        """
+        A1 = '%s:%s:%s' % (self.auth_header['username'], self.realm, password)
+        return self.hash_func(A1)
+
+    def HA2(self, request):
+        """
+        Create HA2 md5 hash
+
+        If the qop directive's value is "auth" or is unspecified, then HA2:
+            HA2 = md5(A2) = MD5(method:digestURI)
+        If the qop directive's value is "auth-int", then HA2 is
+            HA2 = md5(A2) = MD5(method:digestURI:MD5(entityBody))
+        """
+        request_method = request.method
+        request_path = request.get_full_path()
+
+        if self.auth_header.get('qop') in ('auth', None):
+            A2 = '%s:%s' % (request_method, request_path)
+            return self.hash_func(A2)
+        elif self.auth_header.get('qop') == 'auth-int':
+            request_body = request.body
+            body_hash = self.hash_func(request_body)
+            A2 = '%s:%s:%s' % (request_method,
+                    request_path,
+                    body_hash)
+            return self.hash_func(A2)
+
+
+    def hash_func(self, data):
+        alg_hash_func = self.hash_algorithms[self.algorithm]
+        return alg_hash_func(data).hexdigest()
 
 
 # TODO: OAuthAuthentication
